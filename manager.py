@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, errors, utils
 from telethon.tl.functions.channels import GetParticipantsRequest, InviteToChannelRequest
 from telethon.tl.functions.messages import GetDialogsRequest
-from telethon.tl.types import ChannelParticipantsSearch, UserStatusRecently, InputPeerEmpty
+from telethon.tl.types import ChannelParticipantsSearch, UserStatusRecently, InputPeerEmpty, UserStatusOffline, UserStatusOnline
 import sys
 import json
 
@@ -106,6 +106,20 @@ def load_accounts():
     except Exception as e:
         print(f"{Colors.WARNING}[WARN]{Colors.ENDC} Impossible de charger comptes: {e}")
 
+def input_account():
+    clear_screen()
+    print(f"{Colors.BOLD}Saisir les informations du compte Telegram :{Colors.ENDC}")
+    try:
+        api_id = int(input("api_id (numérique) : ").strip())
+        api_hash = input("api_hash : ").strip()
+        phone = input("Numéro de téléphone (+33...) : ").strip()
+        return {'api_id': api_id, 'api_hash': api_hash, 'phone': phone,
+                'added_users': 0, 'last_error': None, 'client': None}
+    except Exception as e:
+        print(f"{Colors.FAIL}Entrée invalide : {e}{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir...{Colors.ENDC}")
+        return None
+
 def print_menu():
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
@@ -141,6 +155,8 @@ def remove_account():
     else:
         print(f"{Colors.FAIL}Choix invalide.{Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+# (Les autres fonctions comme connect_client, disconnect_client, etc. restent inchangées et doivent être intégrées ici)
 
 # Fonction pour envoyer des messages en masse
 async def send_mass_message(client, group, message):
@@ -181,15 +197,17 @@ async def remove_inactive_members():
             members = await get_all_active_members(client, GROUP_TARGET)
             for member in members:
                 if member.status and isinstance(member.status, UserStatusOffline):
-                    if member.status.was_online < two_months_ago:
-                        try:
-                            await client(InviteToChannelRequest(
-                                channel=GROUP_TARGET,
-                                users=[member.id]
-                            ))
-                            print(f"{Colors.OKGREEN}[OK]{Colors.ENDC} Retiré: {member.first_name} ({member.id})")
-                        except Exception as e:
-                            print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible de retirer {member.first_name} : {e}")
+                    was_online = member.status.was_online
+                    if was_online is not None:
+                        # For naive datetimes, assume UTC
+                        if was_online.tzinfo is None:
+                            was_online = was_online.replace(tzinfo=timezone.utc)
+                        if was_online < two_months_ago:
+                            try:
+                                await client.kick_participant(GROUP_TARGET, member)
+                                print(f"{Colors.OKGREEN}[OK]{Colors.ENDC} Retiré: {member.first_name} ({member.id})")
+                            except Exception as e:
+                                print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible de retirer {member.first_name} : {e}")
             await disconnect_client(account)
 
 # Fonction pour actualiser et corriger le script
@@ -197,7 +215,9 @@ async def refresh_script():
     clear_screen()
     print(f"{Colors.BOLD}Actualisation et correction du script :{Colors.ENDC}")
     # Ici, vous pouvez ajouter des fonctionnalités pour corriger et optimiser le script
+    # Par exemple vérifier les comptes, reset cache, vérifier les droits, etc.
     print(f"{Colors.OKGREEN}Script actualisé avec succès.{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 def main_loop():
     global GROUP_SOURCE, GROUP_TARGET, GROUP_INVITE_LINK
@@ -284,3 +304,4 @@ if __name__ == '__main__':
     print(f"{Colors.HEADER}{Colors.BOLD}=== Bienvenue dans le gestionnaire Telegram multi-comptes ultra-sûr et optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
     main_loop()
+
