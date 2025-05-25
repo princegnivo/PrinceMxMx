@@ -1,52 +1,39 @@
-# Telegram Multi-Account Group Member Manager
+# Gestionnaire Telegram Multi-Comptes Ultra-Sûr et Optimisé
 
-Script Python ultra-sûr et interactif pour gérer l'ajout de membres entre groupes Telegram en utilisant plusieurs comptes.
+Ce gestionnaire Telegram multi-comptes est un script Python conçu pour automatiser la gestion des groupes Telegram avec une approche ultra-sûre, ultra-optimisée et robuste grâce à une interface console colorée. Il est compatible avec Python 3.7+ et utilise la bibliothèque Telethon pour les interactions avec Telegram.
 
 ---
 
 ## Fonctionnalités
 
-- Gestion multi-comptes Telegram (ajout, mise à jour, reconnexion, correction erreurs)
-- Affichage de l'état des comptes (connexion, erreurs, nombre d'ajouts)
-- Choix interactif des groupes source et cible parmi tous les groupes accessibles d’un compte
-- Ajout des membres actifs récents (7 derniers jours)
-- Rotation sécurisée entre comptes (10 membres max par compte, pauses longues aléatoires)
-- Envoi automatique d'un lien d'invitation si le compte ne peut pas ajouter directement les membres (pas admin)
-- Interface console simple et intuitive avec menu numéroté
+- **Gestion multi-comptes** avec reconnexion et rotation automatique.
+- **Correction complète** de la gestion du `datetime` en UTC, compatible Python 3.12+.
+- **Interface console colorée ANSI** avec effacement de l’écran entre menus.
+- **Choix interactif des groupes source et cible** parmi vos groupes Telegram.
+- **Ajout des membres actifs récents** (derniers 7 jours) dans le groupe cible.
+- **Rotation sécurisée des comptes** avec pauses aléatoires optimisées pour réduire les risques de blocage.
+- **Envoi de lien d’invitation** si absence de droits d’admin dans le groupe cible.
+- **Gestion avancée des erreurs** courantes (FloodWait, restrictions de confidentialité).
+- **Sauvegarde automatique** des sessions et comptes localement.
+- **Caches des membres** pour éviter les appels Telegram redondants.
+- **Retrait d’un compte Telegram** du gestionnaire.
+- **Envoi de messages en masse** vers un groupe sélectionné.
+- **Retrait automatique des membres inactifs** au-delà de 2 mois.
+- **Option d’actualisation et correction du script**.
 
 ---
 
 ## Prérequis
 
-- Python 3.7+
-- [Telethon](https://docs.telethon.dev/en/stable/) (`pip install telethon`)
-- Création préalable de comptes Telegram avec `api_id` et `api_hash` (obtenus sur https://my.telegram.org)
-- Être membre (ou admin) des groupes source et cible
+- Python 3.7 ou supérieur
+- Module [`Telethon`](https://github.com/LonamiWebs/Telethon)
 
 ---
 
 ## Installation
 
-1. Cloner ce dépôt ou télécharger le fichier `telegram_group_multiaccount_manager.py`.
-2. Installer Telethon (si ce n’est pas déjà fait) :
-   ```
+1. Clonez ou téléchargez ce script.
+2. Installez Telethon si ce n’est pas déjà fait :
+
+   ```bash
    pip install telethon
-   ```
-   
-#####   Utilisation
-
-Lancer le script :
-
-```
-python telegram_group_multiaccount_manager.py
-```
-Utiliser le menu pour :
-
-Ajouter ou mettre à jour des comptes Telegram (api_id, api_hash, numéro)
-Afficher l’état des comptes (statistiques, erreurs)
-Choisir les groupes source et cible parmi ceux dont vous êtes membre
-Mettre à jour et actualiser les comptes (connexion)
-Lancer l’ajout des membres actifs récents du groupe source vers le groupe cible
-Quitter proprement le programme
-Suivre les instructions en console.
-
