@@ -39,6 +39,7 @@ class Colors:
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
+    YELLOW = '\033[93m'    # Added yellow for menu title
     ENDC = '\033[0m'      # Reset
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
@@ -191,7 +192,6 @@ def is_user_active_recently(user):
         now = datetime.now(timezone.utc)
         delta_7_days = timedelta(days=7)
         was_online = status.was_online
-        # Compatibilité offset naive/aware
         if was_online.tzinfo is None:
             was_online = was_online.replace(tzinfo=timezone.utc)
         if now - was_online <= delta_7_days:
@@ -241,12 +241,7 @@ async def choose_group(account, purpose):
         time.sleep(1)
 
 async def get_all_active_members(client, group):
-    """
-    Récupère et filtre les membres actifs récents du groupe.
-    Utilise cache TTL pour éviter recharge trop fréquente.
-    """
     global MEMBERS_CACHE
-
     now_ts = time.time()
     if MEMBERS_CACHE["timestamp"] + MEMBER_CACHE_TTL > now_ts and MEMBERS_CACHE["members"]:
         print(f"{Colors.OKBLUE}Utilisation du cache membre moins de {MEMBER_CACHE_TTL//60} min.{Colors.ENDC}")
@@ -434,17 +429,49 @@ async def mass_message():
         else:
             print(f"{Colors.FAIL}Échec de connexion pour {account['phone']}.{Colors.ENDC}")
 
-# Fonction pour retirer les membres inactifs
+# Fonction pour retirer les membres inactifs (modifiée selon la demande)
 async def remove_inactive_members():
     clear_screen()
     print(f"{Colors.BOLD}Retrait des membres inactifs (2 mois ou plus) :{Colors.ENDC}")
-    if not GROUP_TARGET:
-        print(f"{Colors.FAIL}Aucun groupe cible configuré.{Colors.ENDC}")
+
+    if not ACCOUNTS:
+        print(f"{Colors.FAIL}Aucun compte configuré pour récupérer les groupes.{Colors.ENDC}")
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
         return
+
+    # Utilisation du premier compte pour se connecter et chercher le groupe par nom
+    account = ACCOUNTS[0]
+    client = await connect_client(account)
+    if client is None:
+        print(f"{Colors.FAIL}Impossible de se connecter avec le compte {account['phone']}.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    group_name = input("Entrez le nom exact du groupe Telegram pour retirer les membres inactifs : ").strip()
+    if not group_name:
+        print(f"{Colors.FAIL}Nom de groupe vide. Annulation.{Colors.ENDC}")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    # Recherche du groupe dans ses groupes
+    groups = await get_all_groups(client)
+    chosen_group = None
+    for g in groups:
+        if g.title == group_name:
+            chosen_group = g
+            break
+    await disconnect_client(account)
+
+    if not chosen_group:
+        print(f"{Colors.FAIL}Groupe '{group_name}' introuvable parmi vos groupes.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
     two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
-    for account in ACCOUNTS:
-        client = await connect_client(account)
+
+    for acc in ACCOUNTS:
+        client = await connect_client(acc)
         if client:
             try:
                 all_participants = []
@@ -452,7 +479,7 @@ async def remove_inactive_members():
                 limit = 100
                 while True:
                     participants = await client(GetParticipantsRequest(
-                        channel=GROUP_TARGET,
+                        channel=chosen_group,
                         filter=ChannelParticipantsSearch(''),
                         offset=offset,
                         limit=limit,
@@ -471,21 +498,18 @@ async def remove_inactive_members():
                                 was_online = was_online.replace(tzinfo=timezone.utc)
                             if was_online < two_months_ago:
                                 try:
-                                    # Use EditBannedRequest or appropriate method to kick user
-                                    await client.kick_participant(GROUP_TARGET, member)
+                                    await client.kick_participant(chosen_group, member)
                                     print(f"{Colors.OKGREEN}[OK]{Colors.ENDC} Retiré: {member.first_name} ({member.id})")
                                 except Exception as e:
                                     print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible de retirer {member.first_name} : {e}")
             except Exception as e:
                 print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors du retrait des membres inactifs : {e}")
-            await disconnect_client(account)
+            await disconnect_client(acc)
 
 # Fonction pour actualiser et corriger le script
 async def refresh_script():
     clear_screen()
     print(f"{Colors.BOLD}Actualisation et correction du script :{Colors.ENDC}")
-    # Ajoutez ici les fonctions d'analyse, nettoyage cache, mise à jour des comptes, etc.
-    # Par exemple, on peut rafraîchir les sessions et vérifier la validité des comptes
     for account in ACCOUNTS:
         client = await connect_client(account)
         if client:
@@ -493,7 +517,6 @@ async def refresh_script():
             await disconnect_client(account)
         else:
             print(f"{Colors.WARNING}Compte {account['phone']} invalide ou déjà déconnecté.{Colors.ENDC}")
-    # Reset du cache membres
     global MEMBERS_CACHE
     MEMBERS_CACHE = {"timestamp": 0, "members": []}
     print(f"{Colors.OKGREEN}Script actualisé et nettoyé avec succès.{Colors.ENDC}")
@@ -502,7 +525,7 @@ async def refresh_script():
 def print_menu():
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
-    print(f"{Colors.HEADER}GESTION DES COMPTES{Colors.ENDC}")
+    print(f"{Colors.YELLOW}GESTION DES COMPTES{Colors.ENDC}")  # Title in yellow
     print(f"{Colors.OKCYAN}1{Colors.ENDC} - Ajouter un compte")
     print(f"{Colors.OKCYAN}2{Colors.ENDC} - État des comptes")
     print(f"{Colors.OKCYAN}3{Colors.ENDC} - Retrait d'un compte")
@@ -601,5 +624,4 @@ if __name__ == '__main__':
     print(f"{Colors.HEADER}{Colors.BOLD}=== Bienvenue dans le gestionnaire Telegram multi-comptes ultra-sûr et optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
     main_loop()
-
 
