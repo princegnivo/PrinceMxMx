@@ -63,6 +63,7 @@ ACCOUNTS = []         # list dict: api_id, api_hash, phone, added_users, last_er
 GROUP_SOURCE = None   # Telegram entity (objet)
 GROUP_TARGET = None   # Telegram entity
 GROUP_INVITE_LINK = None  # url invitation si pas admin
+MESSAGE_TO_SEND = None  # Message à envoyer aux membres
 
 # Cache membres source (list user id + timestamp)
 MEMBERS_CACHE = {"timestamp": 0, "members": []}
@@ -386,51 +387,11 @@ async def refresh_all_accounts():
     save_accounts()
     input(f"\n{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
-def remove_account():
-    clear_screen()
-    print(f"{Colors.BOLD}Retirer un compte Telegram :{Colors.ENDC}")
-    if not ACCOUNTS:
-        print(f"{Colors.WARNING}Aucun compte configuré.{Colors.ENDC}\n")
-        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
-        return
-    for i, acc in enumerate(ACCOUNTS, 1):
-        print(f"{Colors.OKBLUE}Compte #{i}{Colors.ENDC}: {acc['phone']}")
-    choice = input(f"\nChoisissez le numéro du compte à retirer : ").strip()
-    if choice.isdigit() and 1 <= int(choice) <= len(ACCOUNTS):
-        removed_account = ACCOUNTS.pop(int(choice) - 1)
-        print(f"{Colors.OKGREEN}Compte {removed_account['phone']} retiré avec succès.{Colors.ENDC}")
-        save_accounts()
-    else:
-        print(f"{Colors.FAIL}Choix invalide.{Colors.ENDC}")
-    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+# -- Modifications principales --
 
-async def send_mass_message(client, group, message):
-    try:
-        await client.send_message(group, message)
-        print(f"{Colors.OKGREEN}[INFO]{Colors.ENDC} Message envoyé avec succès.")
-    except Exception as e:
-        print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible d'envoyer le message : {e}")
-
-async def mass_message():
-    clear_screen()
-    print(f"{Colors.BOLD}Masse de message :{Colors.ENDC}")
-    if not GROUP_TARGET:
-        print(f"{Colors.FAIL}Aucun groupe cible configuré.{Colors.ENDC}")
-        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
-        return
-    message = input("Entrez le message à envoyer : ")
-    for account in ACCOUNTS:
-        client = await connect_client(account)
-        if client:
-            await send_mass_message(client, GROUP_TARGET, message)
-            await disconnect_client(account)
-        else:
-            print(f"{Colors.FAIL}Échec de connexion pour {account['phone']}.{Colors.ENDC}")
-
-# Modification ciblée : option 8 - demande le NOM du groupe Telegram "sans @" ni "https://t.me/"
 async def remove_inactive_members():
     clear_screen()
-    print(f"{Colors.BOLD}Retrait des membres inactifs (2 mois ou plus) :{Colors.ENDC}")
+    print(f"{Colors.BOLD}Extraction des membres inactifs (3 mois ou plus) :{Colors.ENDC}")
 
     if not ACCOUNTS:
         print(f"{Colors.FAIL}Aucun compte configuré pour récupérer les groupes.{Colors.ENDC}")
@@ -444,8 +405,8 @@ async def remove_inactive_members():
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
         return
 
-    # Demander le nom du groupe sans @ ou https://t.me/
-    group_name = input("Entrez le lien/nom du groupe Telegram (sans '@' ou 'https://t.me/') : ").strip()
+    # Demande du lien du groupe sans @ ou https://t.me/
+    group_name = input("Entrez le lien du groupe Telegram (sans '@' ou 'https://t.me/') : ").strip()
     if not group_name:
         print(f"{Colors.FAIL}Nom de groupe vide. Annulation.{Colors.ENDC}")
         await disconnect_client(account)
@@ -465,7 +426,10 @@ async def remove_inactive_members():
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
         return
 
-    two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
+    print(f"{Colors.OKCYAN}Extraction commencera dans 10 secondes...{Colors.ENDC}")
+    time.sleep(10)
+
+    three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
 
     for acc in ACCOUNTS:
         client = await connect_client(acc)
@@ -486,6 +450,7 @@ async def remove_inactive_members():
                         break
                     all_participants.extend(participants.users)
                     offset += len(participants.users)
+                print(f"{Colors.OKGREEN}Extraction terminée. Membres inactifs depuis 3 mois ou plus listés ci-dessous :{Colors.ENDC}")
                 for member in all_participants:
                     status = getattr(member, 'status', None)
                     if isinstance(status, UserStatusOffline):
@@ -493,31 +458,57 @@ async def remove_inactive_members():
                         if was_online is not None:
                             if was_online.tzinfo is None:
                                 was_online = was_online.replace(tzinfo=timezone.utc)
-                            if was_online < two_months_ago:
-                                try:
-                                    await client.kick_participant(group_entity, member)
-                                    print(f"{Colors.OKGREEN}[OK]{Colors.ENDC} Retiré: {member.first_name} ({member.id})")
-                                except Exception as e:
-                                    print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible de retirer {member.first_name} : {e}")
+                            if was_online < three_months_ago:
+                                print(f"- {member.first_name} ({member.id}), last seen: {was_online.isoformat()}")
             except Exception as e:
-                print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors du retrait des membres inactifs : {e}")
+                print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors de l'extraction des membres inactifs : {e}")
             await disconnect_client(acc)
 
-async def refresh_script():
+async def mass_message():
     clear_screen()
-    print(f"{Colors.BOLD}Actualisation et correction du script :{Colors.ENDC}")
+    print(f"{Colors.BOLD}Envoi de masse de messages :{Colors.ENDC}")
+
+    if not GROUP_SOURCE:
+        print(f"{Colors.FAIL}Le groupe source n'est pas configuré. Veuillez configurer via le menu (option 5).{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    if MESSAGE_TO_SEND is None or MESSAGE_TO_SEND.strip() == "":
+        print(f"{Colors.FAIL}Aucun message configuré pour l'envoi en masse.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
     for account in ACCOUNTS:
         client = await connect_client(account)
         if client:
-            print(f"{Colors.OKGREEN}Compte {account['phone']} validé.{Colors.ENDC}")
+            try:
+                all_participants = []
+                offset = 0
+                limit = 100
+                while True:
+                    participants = await client(GetParticipantsRequest(
+                        channel=GROUP_SOURCE,
+                        filter=ChannelParticipantsSearch(''),
+                        offset=offset,
+                        limit=limit,
+                        hash=0
+                    ))
+                    if not participants.users:
+                        break
+                    all_participants.extend(participants.users)
+                    offset += len(participants.users)
+                for member in all_participants:
+                    try:
+                        await client.send_message(member.id, MESSAGE_TO_SEND)
+                        print(f"{Colors.OKGREEN}Message envoyé à {member.first_name} ({member.id}){Colors.ENDC}")
+                        await asyncio.sleep(2)  # Petites pauses pour éviter flood
+                    except Exception as e:
+                        print(f"{Colors.FAIL}Erreur envoi message à {member.first_name} ({member.id}): {e}{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors de l'envoi de masse : {e}")
             await disconnect_client(account)
-        else:
-            print(f"{Colors.WARNING}Compte {account['phone']} invalide ou déjà déconnecté.{Colors.ENDC}")
-    global MEMBERS_CACHE
-    MEMBERS_CACHE = {"timestamp": 0, "members": []}
-    print(f"{Colors.OKGREEN}Script actualisé et nettoyé avec succès.{Colors.ENDC}")
-    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
+# Modification dans le menu option 5 pour enregistrer le message à envoyer
 def print_menu():
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
@@ -527,16 +518,16 @@ def print_menu():
     print(f"{Colors.OKCYAN}3{Colors.ENDC} - Retrait d'un compte")
     print(f"{Colors.OKCYAN}4{Colors.ENDC} - Mise à jour & Actualisation des comptes")
     print(f"{Colors.OKBLUE}RÉCUPÉRATIONS, AJOUTS/MESSAGE{Colors.ENDC}")
-    print(f"{Colors.OKCYAN}5{Colors.ENDC} - Choix groupe source & cible")
+    print(f"{Colors.OKCYAN}5{Colors.ENDC} - Choix groupe source & cible (et configuration message masse)")
     print(f"{Colors.OKCYAN}6{Colors.ENDC} - Ajout des membres")
     print(f"{Colors.OKCYAN}7{Colors.ENDC} - Masse de message")
-    print(f"{Colors.OKCYAN}8{Colors.ENDC} - Retrait membres inactifs (il y a 2 mois ou plus)")
+    print(f"{Colors.OKCYAN}8{Colors.ENDC} - Extraction membres inactifs 3 mois ou plus")
     print(f"{Colors.OKGREEN}AUTRES{Colors.ENDC}")
     print(f"{Colors.OKCYAN}9{Colors.ENDC} - Actualiser & Correction intelligent du script")
     print(f"{Colors.OKCYAN}10{Colors.ENDC} - Quitter\n")
 
 def main_loop():
-    global GROUP_SOURCE, GROUP_TARGET, GROUP_INVITE_LINK
+    global GROUP_SOURCE, GROUP_TARGET, GROUP_INVITE_LINK, MESSAGE_TO_SEND
 
     load_accounts()
     while True:
@@ -588,6 +579,7 @@ def main_loop():
             print(f"{Colors.BOLD}Si vous n'êtes pas admin du groupe cible, veuillez fournir un lien d'invitation public ou privé.{Colors.ENDC}")
             inv_link = input("Lien d'invitation du groupe cible (laisser vide si admin) : ").strip()
             GROUP_INVITE_LINK = inv_link if inv_link else None
+            MESSAGE_TO_SEND = input("Message à envoyer aux membres du groupe source lors de l'option 7 (laisser vide pour aucun) : ").strip()
             input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
         elif choice == '6':
@@ -620,4 +612,3 @@ if __name__ == '__main__':
     print(f"{Colors.HEADER}{Colors.BOLD}=== Bienvenue dans le gestionnaire Telegram multi-comptes ultra-sûr et optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
     main_loop()
-
