@@ -39,40 +39,36 @@ class Colors:
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
-    YELLOW = '\033[93m'    # Added yellow for menu title
-    ENDC = '\033[0m'      # Reset
+    YELLOW = '\033[93m'
+    ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
 # Délais et paramètres optimisés
-BASE_DELAY_BETWEEN_ADDS = 12          # pause moyenne avant ajout membre (pour réduire risques)
-BASE_DELAY_BETWEEN_ACCOUNTS = 45      # pause moyenne entre changement de comptes
-MEMBERS_PER_ACCOUNT = 8                # nb membres ajoutés max par compte avant changement (Telegram limite)
-MEMBER_CACHE_TTL = 3600               # cache membre: 1h (60*60s)
+BASE_DELAY_BETWEEN_ADDS = 12
+BASE_DELAY_BETWEEN_ACCOUNTS = 45
+MEMBERS_PER_ACCOUNT = 8
+MEMBER_CACHE_TTL = 3600
 
-# Stockage des sessions dans ./sessions/ avec gestion automatique
 SESSION_DIR = "./sessions"
 if not os.path.isdir(SESSION_DIR):
     os.mkdir(SESSION_DIR)
 
-# Fichier de sauvegarde comptes local (format JSON)
 ACCOUNTS_FILE = "accounts.json"
 
 # Globals
-ACCOUNTS = []         # list dict: api_id, api_hash, phone, added_users, last_error, client
-GROUP_SOURCE = None   # Telegram entity (objet)
-GROUP_TARGET = None   # Telegram entity
-GROUP_INVITE_LINK = None  # url invitation si pas admin
-MESSAGE_TO_SEND = None  # Message à envoyer aux membres
+ACCOUNTS = []
+GROUP_SOURCE = None
+GROUP_TARGET = None
+GROUP_INVITE_LINK = None
+MESSAGE_TO_SEND = None
 
-# Cache membres source (list user id + timestamp)
 MEMBERS_CACHE = {"timestamp": 0, "members": []}
 
-# Nettoyer écran
+
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
-# Sauvegarder comptes dans JSON local
 def save_accounts():
     try:
         to_save = []
@@ -81,14 +77,13 @@ def save_accounts():
                 'api_id': acc['api_id'],
                 'api_hash': acc['api_hash'],
                 'phone': acc['phone'],
-                'added_users': acc.get('added_users',0)
+                'added_users': acc.get('added_users', 0)
             })
         with open(ACCOUNTS_FILE, "w") as f:
             json.dump(to_save, f)
     except Exception as e:
         print(f"{Colors.WARNING}[WARN]{Colors.ENDC} Impossible de sauvegarder comptes: {e}")
 
-# Charger comptes depuis JSON local
 def load_accounts():
     global ACCOUNTS
     try:
@@ -101,7 +96,7 @@ def load_accounts():
                         'api_id': acc['api_id'],
                         'api_hash': acc['api_hash'],
                         'phone': acc['phone'],
-                        'added_users': acc.get('added_users',0),
+                        'added_users': acc.get('added_users', 0),
                         'last_error': None,
                         'client': None
                     })
@@ -141,10 +136,6 @@ def show_accounts():
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 async def connect_client(account):
-    """
-    Connecte un client Telegram avec session automatique.
-    Reconnexion optimisée, gestion erreurs.
-    """
     if account['client'] is not None and account['client'].is_connected():
         return account['client']
     try:
@@ -176,10 +167,6 @@ async def disconnect_client(account):
             pass
 
 def is_user_active_recently(user):
-    """
-    Vérifie si un utilisateur a été actif dans les 7 derniers jours.
-    Gestion timezone-aware et datetime compatible Python 3.12+.
-    """
     status = getattr(user, 'status', None)
     if status is None:
         return False
@@ -387,11 +374,9 @@ async def refresh_all_accounts():
     save_accounts()
     input(f"\n{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
-# -- Modifications principales --
-
 async def remove_inactive_members():
     clear_screen()
-    print(f"{Colors.BOLD}Extraction des membres inactifs (3 mois ou plus) :{Colors.ENDC}")
+    print(f"{Colors.BOLD}Extraction des membres inactifs (2 mois ou plus) :{Colors.ENDC}")
 
     if not ACCOUNTS:
         print(f"{Colors.FAIL}Aucun compte configuré pour récupérer les groupes.{Colors.ENDC}")
@@ -405,7 +390,7 @@ async def remove_inactive_members():
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
         return
 
-    # Demande du lien du groupe sans @ ou https://t.me/
+    # Demande le lien du groupe sans @ ou https://t.me/
     group_name = input("Entrez le lien du groupe Telegram (sans '@' ou 'https://t.me/') : ").strip()
     if not group_name:
         print(f"{Colors.FAIL}Nom de groupe vide. Annulation.{Colors.ENDC}")
@@ -429,7 +414,7 @@ async def remove_inactive_members():
     print(f"{Colors.OKCYAN}Extraction commencera dans 10 secondes...{Colors.ENDC}")
     time.sleep(10)
 
-    three_months_ago = datetime.now(timezone.utc) - timedelta(days=90)
+    two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
 
     for acc in ACCOUNTS:
         client = await connect_client(acc)
@@ -450,7 +435,7 @@ async def remove_inactive_members():
                         break
                     all_participants.extend(participants.users)
                     offset += len(participants.users)
-                print(f"{Colors.OKGREEN}Extraction terminée. Membres inactifs depuis 3 mois ou plus listés ci-dessous :{Colors.ENDC}")
+                print(f"{Colors.OKGREEN}Extraction terminée. Membres inactifs depuis 2 mois ou plus listés ci-dessous :{Colors.ENDC}")
                 for member in all_participants:
                     status = getattr(member, 'status', None)
                     if isinstance(status, UserStatusOffline):
@@ -458,11 +443,18 @@ async def remove_inactive_members():
                         if was_online is not None:
                             if was_online.tzinfo is None:
                                 was_online = was_online.replace(tzinfo=timezone.utc)
-                            if was_online < three_months_ago:
+                            if was_online < two_months_ago:
                                 print(f"- {member.first_name} ({member.id}), last seen: {was_online.isoformat()}")
             except Exception as e:
                 print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors de l'extraction des membres inactifs : {e}")
             await disconnect_client(acc)
+
+async def send_mass_message(client, group, message):
+    try:
+        await client.send_message(group, message)
+        print(f"{Colors.OKGREEN}[INFO]{Colors.ENDC} Message envoyé avec succès.")
+    except Exception as e:
+        print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible d'envoyer le message : {e}")
 
 async def mass_message():
     clear_screen()
@@ -501,14 +493,28 @@ async def mass_message():
                     try:
                         await client.send_message(member.id, MESSAGE_TO_SEND)
                         print(f"{Colors.OKGREEN}Message envoyé à {member.first_name} ({member.id}){Colors.ENDC}")
-                        await asyncio.sleep(2)  # Petites pauses pour éviter flood
+                        await asyncio.sleep(2)
                     except Exception as e:
                         print(f"{Colors.FAIL}Erreur envoi message à {member.first_name} ({member.id}): {e}{Colors.ENDC}")
             except Exception as e:
                 print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Erreur lors de l'envoi de masse : {e}")
             await disconnect_client(account)
 
-# Modification dans le menu option 5 pour enregistrer le message à envoyer
+async def refresh_script():
+    clear_screen()
+    print(f"{Colors.BOLD}Actualisation et correction du script :{Colors.ENDC}")
+    for account in ACCOUNTS:
+        client = await connect_client(account)
+        if client:
+            print(f"{Colors.OKGREEN}Compte {account['phone']} validé.{Colors.ENDC}")
+            await disconnect_client(account)
+        else:
+            print(f"{Colors.WARNING}Compte {account['phone']} invalide ou déjà déconnecté.{Colors.ENDC}")
+    global MEMBERS_CACHE
+    MEMBERS_CACHE = {"timestamp": 0, "members": []}
+    print(f"{Colors.OKGREEN}Script actualisé et nettoyé avec succès.{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
 def print_menu():
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
@@ -518,10 +524,10 @@ def print_menu():
     print(f"{Colors.OKCYAN}3{Colors.ENDC} - Retrait d'un compte")
     print(f"{Colors.OKCYAN}4{Colors.ENDC} - Mise à jour & Actualisation des comptes")
     print(f"{Colors.OKBLUE}RÉCUPÉRATIONS, AJOUTS/MESSAGE{Colors.ENDC}")
-    print(f"{Colors.OKCYAN}5{Colors.ENDC} - Choix groupe source & cible (et configuration message masse)")
+    print(f"{Colors.OKCYAN}5{Colors.ENDC} - Choix groupe source & cible (et configuration message)")
     print(f"{Colors.OKCYAN}6{Colors.ENDC} - Ajout des membres")
     print(f"{Colors.OKCYAN}7{Colors.ENDC} - Masse de message")
-    print(f"{Colors.OKCYAN}8{Colors.ENDC} - Extraction membres inactifs 3 mois ou plus")
+    print(f"{Colors.OKCYAN}8{Colors.ENDC} - Extraction membres inactifs (2 mois ou plus)")
     print(f"{Colors.OKGREEN}AUTRES{Colors.ENDC}")
     print(f"{Colors.OKCYAN}9{Colors.ENDC} - Actualiser & Correction intelligent du script")
     print(f"{Colors.OKCYAN}10{Colors.ENDC} - Quitter\n")
@@ -607,7 +613,20 @@ def main_loop():
             print(f"{Colors.FAIL}Choix invalide. Réessayez.{Colors.ENDC}")
             time.sleep(1)
 
+def access_code_prompt():
+    clear_screen()
+    for _ in range(3):  # 3 essais max
+        code = input(f"{Colors.BOLD}Entrez le code d'accès pour démarrer : {Colors.ENDC}").strip()
+        if code == "0797":
+            return True
+        else:
+            print(f"{Colors.FAIL}Code incorrect.{Colors.ENDC}")
+    print(f"{Colors.FAIL}Accès refusé. Fermeture du programme.{Colors.ENDC}")
+    return False
+
 if __name__ == '__main__':
+    if not access_code_prompt():
+        sys.exit(1)
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== Bienvenue dans le gestionnaire Telegram multi-comptes ultra-sûr et optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
