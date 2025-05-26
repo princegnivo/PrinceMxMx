@@ -44,11 +44,11 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-# Paramètres
+# Paramètres constants
 BASE_DELAY_BETWEEN_ADDS = 12
 BASE_DELAY_BETWEEN_ACCOUNTS = 45
 MEMBERS_PER_ACCOUNT = 8
-MEMBER_CACHE_TTL = 3600  # Cache 1h
+MEMBER_CACHE_TTL = 3600
 
 SESSION_DIR = './sessions'
 if not os.path.isdir(SESSION_DIR):
@@ -133,7 +133,7 @@ def show_accounts():
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 async def connect_client(account):
-    if account['client'] and account['client'].is_connected():
+    if account['client'] is not None and account['client'].is_connected():
         return account['client']
     try:
         session_file = f"{SESSION_DIR}/session_{account['phone']}"
@@ -212,7 +212,7 @@ async def choose_group(account, purpose):
             chosen = groups[int(choice)-1]
             await disconnect_client(account)
             print(f"{Colors.OKGREEN}Group {purpose} sélectionné : {chosen.title}{Colors.ENDC}")
-            input(f"{Colors.WARNING}Appuyez sur Entrée pour continuer...{Colors.ENDC}")
+            input(f"\n{Colors.WARNING}Appuyez sur Entrée pour continuer...{Colors.ENDC}")
             return chosen
         print(f"{Colors.FAIL}Choix invalide. Réessayez.{Colors.ENDC}")
         time.sleep(1)
@@ -221,11 +221,12 @@ async def get_all_active_members(client, group):
     global MEMBERS_CACHE
     now_ts = time.time()
     if MEMBERS_CACHE["timestamp"] + MEMBER_CACHE_TTL > now_ts and MEMBERS_CACHE["members"]:
-        print(f"{Colors.OKBLUE}Utilisation du cache membres moins de {MEMBER_CACHE_TTL//60} min.{Colors.ENDC}")
+        print(f"{Colors.OKBLUE}Utilisation du cache membres moins de {MEMBER_CACHE_TTL//60} minutes.{Colors.ENDC}")
         return MEMBERS_CACHE["members"]
     all_users = []
     offset = 0
     limit = 100
+    print(f"{Colors.OKBLUE}Récupération des membres actifs dans {group.title} ...{Colors.ENDC}")
     try:
         while True:
             participants = await client(GetParticipantsRequest(channel=group,
@@ -302,7 +303,6 @@ async def run_addition():
     index = 0
     accounts_order = ACCOUNTS.copy()
     random.shuffle(accounts_order)
-
     while index < total_members:
         for account in accounts_order:
             if index >= total_members:
@@ -370,54 +370,75 @@ async def remove_inactive_members():
         await disconnect_client(account)
         input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
         return
-    print(f"{Colors.OKCYAN}Début dans 10 secondes...{Colors.ENDC}")
+
+    print(f"{Colors.OKCYAN}Extraction commencera dans 10 secondes...{Colors.ENDC}")
     time.sleep(10)
     two_months_ago = datetime.now(timezone.utc) - timedelta(days=60)
-    for acc in ACCOUNTS:
-        client = await connect_client(acc)
-        if client:
-            try:
-                all_members = []
-                offset = 0
-                limit = 100
-                while True:
-                    participants = await client(GetParticipantsRequest(
-                        channel=group,
-                        filter=ChannelParticipantsSearch(''),
-                        offset=offset,
-                        limit=limit,
-                        hash=0))
-                    if not participants.users:
-                        break
-                    all_members.extend(participants.users)
-                    offset += len(participants.users)
-                print(f"{Colors.OKGREEN}Extraction terminée. Membres inactifs listés :{Colors.ENDC}")
-                for m in all_members:
-                    status = getattr(m, 'status', None)
-                    if isinstance(status, UserStatusOffline):
-                        was_online = status.was_online
-                        if was_online is not None:
-                            if was_online.tzinfo is None:
-                                was_online = was_online.replace(tzinfo=timezone.utc)
-                            if was_online < two_months_ago:
-                                print(f"- {m.first_name or 'n/a'} ({m.id}), dernier passage: {was_online.isoformat()}")
-            except Exception as e:
-                print(f"{Colors.FAIL}Erreur extraction inactifs: {e}{Colors.ENDC}")
-            await disconnect_client(acc)
-    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+    all_members = []
+    offset = 0
+    limit = 100
+    while True:
+        participants = await client(GetParticipantsRequest(
+            channel=group,
+            filter=ChannelParticipantsSearch(''),
+            offset=offset,
+            limit=limit,
+            hash=0
+        ))
+        if not participants.users:
+            break
+        all_members.extend(participants.users)
+        offset += len(participants.users)
+
+    inactive_members = []
+    for m in all_members:
+        status = getattr(m, 'status', None)
+        if isinstance(status, UserStatusOffline):
+            was_online = status.was_online
+            if was_online is not None:
+                if was_online.tzinfo is None:
+                    was_online = was_online.replace(tzinfo=timezone.utc)
+                if was_online < two_months_ago:
+                    inactive_members.append(m)
+
+    print(f"{Colors.WARNING}Membres inactifs détectés : {len(inactive_members)}{Colors.ENDC}")
+    confirm = input(f"{Colors.BOLD}Souhaitez-vous retirer tous ces membres ? (O/N) : {Colors.ENDC}").strip().lower()
+    if confirm != 'o' and confirm != 'oui' and confirm != 'y' and confirm != 'yes':
+        print(f"{Colors.WARNING}Annulation du retrait des membres.{Colors.ENDC}")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    for member in inactive_members:
+        try:
+            await client.kick_participant(group, member)
+            print(f"{Colors.OKGREEN}Membre retiré : {member.first_name or 'N/A'} ({member.id}){Colors.ENDC}")
+            await asyncio.sleep(2)
+        except errors.ChatAdminRequiredError:
+            print(f"{Colors.FAIL}Droits insuffisants pour retirer les membres.{Colors.ENDC}")
+            break
+        except errors.FloodWaitError as e:
+            print(f"{Colors.WARNING}FloodWait détecté, pause {e.seconds} secondes.{Colors.ENDC}")
+            await asyncio.sleep(e.seconds)
+        except Exception as e:
+            print(f"{Colors.FAIL}Erreur lors du retrait du membre {member.first_name or 'N/A'}: {e}{Colors.ENDC}")
+
+    await disconnect_client(account)
+    input(f"{Colors.WARNING}Opération terminée. Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 async def send_mass_message(client, group, message):
     try:
         await client.send_message(group, message)
-        print(f"{Colors.OKGREEN}[INFO]{Colors.ENDC} Message envoyé.")
+        print(f"{Colors.OKGREEN}[INFO] Message envoyé avec succès.{Colors.ENDC}")
     except Exception as e:
-        print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Impossible d'envoyer le message : {e}")
+        print(f"{Colors.FAIL}[ERREUR] Impossible d'envoyer le message : {e}{Colors.ENDC}")
 
 async def mass_message():
     clear_screen()
-    print(f"{Colors.BOLD}Envoi de masse :{Colors.ENDC}")
+    print(f"{Colors.BOLD}Envoi de masse de messages :{Colors.ENDC}")
     if GROUP_SOURCE is None:
-        print(f"{Colors.FAIL}Configurez d'abord le groupe source via le menu (option 5).{Colors.ENDC}")
+        print(f"{Colors.FAIL}Le groupe source n'est pas configuré. Configurez-le via le menu (option 5).{Colors.ENDC}")
         input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
         return
     message = input("Entrez le message à envoyer : ").strip()
@@ -438,30 +459,32 @@ async def mass_message():
                         filter=ChannelParticipantsSearch(''),
                         offset=offset,
                         limit=limit,
-                        hash=0))
+                        hash=0
+                    ))
                     if not participants.users:
                         break
                     all_members.extend(participants.users)
                     offset += len(participants.users)
-                for member in all_members:
+
+                for m in all_members:
                     try:
-                        await client.send_message(member.id, message)
-                        print(f"{Colors.OKGREEN}Message envoyé à {member.first_name or 'n/a'} ({member.id}){Colors.ENDC}")
-                        await asyncio.sleep(2)
+                        await client.send_message(m.id, message)
+                        print(f"{Colors.OKGREEN}Message envoyé à {m.first_name or 'N/A'} ({m.id}){Colors.ENDC}")
+                        await asyncio.sleep(2)  # Pause entre messages
                     except Exception as e:
-                        print(f"{Colors.FAIL}Erreur envoi message à {member.first_name or 'n/a'} ({member.id}): {e}{Colors.ENDC}")
+                        print(f"{Colors.FAIL}Erreur envoi message à {m.first_name or 'N/A'} ({m.id}): {e}{Colors.ENDC}")
             except Exception as e:
-                print(f"{Colors.FAIL}Erreur masse message: {e}{Colors.ENDC}")
+                print(f"{Colors.FAIL}Erreur lors de l'envoi de masse : {e}{Colors.ENDC}")
             await disconnect_client(account)
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 async def refresh_script():
     clear_screen()
-    print(f"{Colors.BOLD}Actualisation & correction du script :{Colors.ENDC}")
+    print(f"{Colors.BOLD}Actualisation et correction du script :{Colors.ENDC}")
     for account in ACCOUNTS:
         client = await connect_client(account)
         if client:
-            print(f"{Colors.OKGREEN}Compte {account['phone']} valide.{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}Compte {account['phone']} validé.{Colors.ENDC}")
             await disconnect_client(account)
         else:
             print(f"{Colors.WARNING}Compte {account['phone']} invalide ou déconnecté.{Colors.ENDC}")
