@@ -365,4 +365,214 @@ async def mass_message():
     clear_screen()
     print(f"{Colors.BOLD}Envoi de masse de messages :{Colors.ENDC}")
     if GROUP_SOURCE is None:
-        print(f"{Colors
+        print(f"{Colors.FAIL}Le groupe/canal source n'est pas configuré. Configurez-le via le menu (option 5).{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+        return
+    message = input("Entrez le message à envoyer : ").strip()
+    if not message:
+        print(f"{Colors.FAIL}Message vide. Annulation.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+        return
+    for account in ACCOUNTS:
+        client = await connect_client(account)
+        if client:
+            try:
+                all_members = []
+                offset = 0
+                limit = 100
+                while True:
+                    participants = await client(GetParticipantsRequest(
+                        channel=GROUP_SOURCE,
+                        filter=ChannelParticipantsSearch(''),
+                        offset=offset,
+                        limit=limit,
+                        hash=0
+                    ))
+                    if not participants.users:
+                        break
+                    all_members.extend(participants.users)
+                    offset += len(participants.users)
+
+                for m in all_members:
+                    try:
+                        await client.send_message(m.id, message)
+                        print(f"{Colors.OKGREEN}Message envoyé à {m.first_name or 'N/A'} ({m.id}){Colors.ENDC}")
+                        await asyncio.sleep(2)  # Pause entre messages
+                    except Exception as e:
+                        print(f"{Colors.FAIL}Erreur envoi message à {m.first_name or 'N/A'} ({m.id}): {e}{Colors.ENDC}")
+            except Exception as e:
+                print(f"{Colors.FAIL}Erreur lors de l'envoi de masse : {e}{Colors.ENDC}")
+            await disconnect_client(account)
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+async def refresh_all_accounts():
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}Mise à jour et reconnexion de tous les comptes...{Colors.ENDC}\n")
+    for account in ACCOUNTS:
+        client = await connect_client(account)
+        if client:
+            print(f"{Colors.OKGREEN}{account['phone']} connecté.{Colors.ENDC}")
+            account['last_error'] = None
+            await disconnect_client(account)
+        else:
+            print(f"{Colors.FAIL}Échec connexion pour {account['phone']}.{Colors.ENDC}")
+    save_accounts()
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+# (Autres fonctions complètes du script initial sont supposées ici sans modification pour éviter la longueur)
+
+# --- MENU PRINCIPAL ET BOUCLE ---
+
+def print_menu():
+    clear_screen()
+    print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
+    print(f"{Colors.YELLOW}GESTION DES COMPTES{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}1{Colors.ENDC} - Ajouter un compte")
+    print(f"{Colors.OKCYAN}2{Colors.ENDC} - État des comptes")
+    print(f"{Colors.OKCYAN}3{Colors.ENDC} - Retrait d'un compte")
+    print(f"{Colors.OKCYAN}4{Colors.ENDC} - Mise à jour & Actualisation des comptes")
+    print(f"{Colors.OKBLUE}RÉCUPÉRATIONS, AJOUTS/MESSAGE{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}5{Colors.ENDC} - Choix groupe/canal source")
+    print(f"{Colors.OKCYAN}6{Colors.ENDC} - Choix groupe/canal cible & ajout membres")
+    print(f"{Colors.OKCYAN}7{Colors.ENDC} - Envoi de message en masse au groupe/canal source")
+    print(f"{Colors.OKGREEN}RETIRER/REJOINDRE/QUITTER{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}8{Colors.ENDC} - Retrait membres inactifs")
+    print(f"{Colors.OKCYAN}9{Colors.ENDC} - Recherche avancée groupe/canal (avec option rejoindre)")
+    print(f"{Colors.OKCYAN}10{Colors.ENDC} - Quitter des groupes/canaux")
+    print(f"{Colors.OKGREEN}VUES/REACTIONS/SONDAGE{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}11{Colors.ENDC} - Augmenter de vues des pubs sans compte (canaux uniquement)")
+    print(f"{Colors.OKCYAN}12{Colors.ENDC} - Réactions aux pubs/messages")
+    print(f"{Colors.OKCYAN}13{Colors.ENDC} - Sondage/Votes")
+    print(f"{Colors.OKGREEN}MENU FEU{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}14{Colors.ENDC} - Créer un API ID & API HASH")
+    print(f"{Colors.OKCYAN}15{Colors.ENDC} - Signaler un compte/groupe/canal")
+    print(f"{Colors.OKGREEN}AUTRES{Colors.ENDC}")
+    print(f"{Colors.OKCYAN}16{Colors.ENDC} - Actualiser & Correction intelligent du script")
+    print(f"{Colors.OKCYAN}99{Colors.ENDC} - Quitter\n")
+
+def access_code_prompt():
+    clear_screen()
+    for _ in range(3):
+        code = input(f"{Colors.BOLD}Entrez le code d'accès : {Colors.ENDC}").strip()
+        if code == '0797':
+            return True
+        print(f"{Colors.FAIL}Code incorrect.{Colors.ENDC}")
+    print(f"{Colors.FAIL}Accès refusé.{Colors.ENDC}")
+    return False
+
+def main_loop():
+    global GROUP_SOURCE, GROUP_TARGET, GROUP_INVITE_LINK, MESSAGE_TO_SEND
+
+    load_accounts()
+    while True:
+        print_menu()
+        choice = input(f"{Colors.BOLD}Choix (numéro) : {Colors.ENDC}").strip()
+
+        loop = asyncio.get_event_loop()
+
+        if choice == '1':
+            acc = input_account()
+            if acc:
+                existing = next((a for a in ACCOUNTS if a['phone'] == acc['phone']), None)
+                if existing:
+                    existing.update(acc)
+                    print(f"{Colors.OKGREEN}Compte {acc['phone']} mis à jour.{Colors.ENDC}")
+                else:
+                    ACCOUNTS.append(acc)
+                    print(f"{Colors.OKGREEN}Compte {acc['phone']} ajouté.{Colors.ENDC}")
+                save_accounts()
+                input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+        elif choice == '2':
+            show_accounts()
+        elif choice == '3':
+            remove_account()
+        elif choice == '4':
+            loop.run_until_complete(refresh_all_accounts())
+        elif choice == '5':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            grp_source = loop.run_until_complete(choose_group_channel(account, "source"))
+            if grp_source:
+                GROUP_SOURCE = grp_source
+                print(f"{Colors.OKGREEN}Groupe/canal source configuré : {grp_source.title}{Colors.ENDC}")
+            input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+        elif choice == '6':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            grp_target = loop.run_until_complete(choose_group_channel(account, "cible"))
+            if grp_target:
+                GROUP_TARGET = grp_target
+                print(f"{Colors.OKGREEN}Groupe/canal cible configuré : {grp_target.title}{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée pour lancer l'ajout...{Colors.ENDC}")
+                loop.run_until_complete(run_addition())
+            else:
+                print(f"{Colors.FAIL}Aucun groupe/canal cible sélectionné.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+        elif choice == '7':
+            loop.run_until_complete(mass_message())
+        elif choice == '8':
+            loop.run_until_complete(remove_inactive_members())
+        elif choice == '9':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            loop.run_until_complete(advanced_search_group_channel(account))
+        elif choice == '10':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            loop.run_until_complete(leave_multiple_groups_channels(account))
+        elif choice == '11':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            loop.run_until_complete(increase_views(account))
+        elif choice == '12':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            loop.run_until_complete(react_to_message(account))
+        elif choice == '13':
+            if not ACCOUNTS:
+                print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+                input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+                continue
+            account = ACCOUNTS[0]
+            loop.run_until_complete(create_poll(account))
+        elif choice == '14':
+            create_api_id_hash_info()
+        elif choice == '15':
+            report_account_group_channel()
+        elif choice == '16':
+            loop.run_until_complete(refresh_script())
+        elif choice == '99':
+            clear_screen()
+            print(f"{Colors.BOLD}{Colors.OKCYAN}Au revoir !{Colors.ENDC}")
+            sys.exit(0)
+        else:
+            print(f"{Colors.FAIL}Choix invalide.{Colors.ENDC}")
+            time.sleep(1)
+
+if __name__ == '__main__':
+    if not access_code_prompt():
+        sys.exit(1)
+    clear_screen()
+    print(f"{Colors.HEADER}{Colors.BOLD}=== Gestionnaire Telegram multi-comptes optimisé ==={Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
+    main_loop()
+
