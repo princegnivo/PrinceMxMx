@@ -22,9 +22,9 @@ Nouveaux menus et fonctions :
 - Vues/Reactions/Sondage  
 - Menu FEU (API creation & signalements)  
 - Autres (actualisation script, etc.)
-
 """
 
+# === IMPORTATIONS ===
 import asyncio
 import random
 import time
@@ -34,11 +34,11 @@ import json
 from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, errors
 from telethon.tl.functions.channels import GetParticipantsRequest, InviteToChannelRequest, JoinChannelRequest, LeaveChannelRequest
-from telethon.tl.functions.messages import GetDialogsRequest, GetFullChatRequest
+from telethon.tl.functions.messages import GetDialogsRequest, GetFullChatRequest, GetHistoryRequest
 from telethon.tl.types import ChannelParticipantsSearch, UserStatusRecently, UserStatusOffline, UserStatusOnline, InputPeerEmpty
 from telethon.utils import get_input_peer
 
-# Constantes couleurs ANSI
+# === CONSTANTES COULEURS ANSI ===
 class Colors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -51,7 +51,7 @@ class Colors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-# Paramètres constants
+# === PARAMÈTRES CONSTANTS ===
 BASE_DELAY_BETWEEN_ADDS = 12
 BASE_DELAY_BETWEEN_ACCOUNTS = 45
 MEMBERS_PER_ACCOUNT = 8
@@ -63,7 +63,7 @@ if not os.path.isdir(SESSION_DIR):
 
 ACCOUNTS_FILE = 'accounts.json'
 
-# Globals
+# === VARIABLES GLOBALES ===
 ACCOUNTS = []
 GROUP_SOURCE = None
 GROUP_TARGET = None
@@ -72,8 +72,7 @@ MESSAGE_TO_SEND = None
 
 MEMBERS_CACHE = {'timestamp': 0, 'members': []}
 
-# === UTILITAIRES
-
+# === UTILITAIRES ===
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -109,8 +108,7 @@ def load_accounts():
     except Exception as e:
         print(f"{Colors.WARNING}[WARN]{Colors.ENDC} Impossible de charger comptes: {e}")
 
-# === GESTION COMPTES
-
+# === GESTION DES COMPTES ===
 def input_account():
     clear_screen()
     print(f"{Colors.BOLD}Saisir les informations du compte Telegram :{Colors.ENDC}")
@@ -192,8 +190,7 @@ def remove_account():
         print(f"{Colors.FAIL}Choix invalide.{Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
 
-# === UTILITAIRES MEMBRES ET GROUPES/CANAUX
-
+# === UTILITAIRES MEMBRES ET GROUPES/CANAUX ===
 def is_user_active_recently(user):
     status = getattr(user, 'status', None)
     if status is None:
@@ -211,16 +208,18 @@ def is_user_active_recently(user):
         return (now - was_online) <= delta
     return False
 
-async def get_all_groups_channels(client):
-    # Obtenir tous les groupes et canaux (megagroups + channels)
+async def get_all_groups_channels(client, filter_source=False):
     groups_channels = []
     try:
         dialogs = await client(GetDialogsRequest(offset_date=None, offset_id=0,
                 offset_peer=InputPeerEmpty(), limit=300, hash=0))
         for chat in dialogs.chats:
-            # On prend megagroups (groupes) et channels publics/privés pour ciblage
-            if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
-                groups_channels.append(chat)
+            if filter_source:
+                if getattr(chat, 'megagroup', False):
+                    groups_channels.append(chat)
+            else:
+                if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
+                    groups_channels.append(chat)
     except Exception as e:
         print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération groupes/canaux : {e}")
     return groups_channels
@@ -230,7 +229,8 @@ async def choose_group_channel(account, purpose):
     if not client:
         input(f"{Colors.FAIL}Impossible de se connecter avec {account['phone']}. Appuyez sur Entrée...{Colors.ENDC}")
         return None
-    groups_channels = await get_all_groups_channels(client)
+    filter_source = (purpose == "source")
+    groups_channels = await get_all_groups_channels(client, filter_source=filter_source)
     if not groups_channels:
         input(f"{Colors.WARNING}Aucun groupe/canal trouvé. Appuyez sur Entrée...{Colors.ENDC}")
         await disconnect_client(account)
@@ -251,27 +251,86 @@ async def choose_group_channel(account, purpose):
         print(f"{Colors.FAIL}Choix invalide. Réessayez.{Colors.ENDC}")
         time.sleep(1)
 
+async def get_active_members_from_channel(client, channel, days=7, limit_msgs=1000):
+    active_users = {}
+    now = datetime.now(timezone.utc)
+    oldest_date = now - timedelta(days=days)
+    offset_id = 0
+    total_count = 0
+
+    print(f"{Colors.OKBLUE}Récupération des membres actifs via messages dans le canal {channel.title} ...{Colors.ENDC}")
+
+    while True:
+        history = await client(GetHistoryRequest(
+            peer=channel,
+            offset_id=offset_id,
+            offset_date=None,
+            add_offset=0,
+            limit=100,
+            max_id=0,
+            min_id=0,
+            hash=0
+        ))
+        if not history.messages:
+            break
+
+        for message in history.messages:
+            total_count += 1
+            if message.date < oldest_date:
+                break
+            sender = await message.get_sender()
+            if sender and sender.id not in active_users:
+                if is_user_active_recently(sender):
+                    active_users[sender.id] = sender
+
+        if total_count >= limit_msgs or message.date < oldest_date:
+            break
+
+        offset_id = history.messages[-1].id
+
+    print(f"{Colors.OKGREEN}Membres actifs détectés dans canal : {len(active_users)}{Colors.ENDC}")
+    return list(active_users.values())
+
 async def get_all_active_members(client, group_channel):
     global MEMBERS_CACHE
     now_ts = time.time()
     if MEMBERS_CACHE["timestamp"] + MEMBER_CACHE_TTL > now_ts and MEMBERS_CACHE["members"]:
         print(f"{Colors.OKBLUE}Utilisation du cache membres moins de {MEMBER_CACHE_TTL//60} minutes.{Colors.ENDC}")
         return MEMBERS_CACHE["members"]
+
     all_users = []
-    offset = 0
-    limit = 100
-    print(f"{Colors.OKBLUE}Récupération des membres actifs dans {group_channel.title} ...{Colors.ENDC}")
-    try:
-        while True:
-            participants = await client(GetParticipantsRequest(channel=group_channel,
-                    filter=ChannelParticipantsSearch(''), offset=offset, limit=limit, hash=0))
-            if not participants.users:
-                break
-            filtered = [user for user in participants.users if is_user_active_recently(user)]
-            all_users.extend(filtered)
-            offset += len(participants.users)
-    except Exception as e:
-        print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération membres: {e}")
+
+    if getattr(group_channel, 'megagroup', False):
+        print(f"{Colors.OKBLUE}Récupération des membres actifs dans le groupe {group_channel.title} ...{Colors.ENDC}")
+        offset = 0
+        limit = 100
+        try:
+            while True:
+                participants = await client(GetParticipantsRequest(
+                    channel=group_channel,
+                    filter=ChannelParticipantsSearch(''),
+                    offset=offset,
+                    limit=limit,
+                    hash=0))
+                if not participants.users:
+                    break
+                filtered = [user for user in participants.users if is_user_active_recently(user)]
+                all_users.extend(filtered)
+                offset += len(participants.users)
+        except Exception as e:
+            print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération membres: {e}")
+            return None
+
+    elif getattr(group_channel, 'broadcast', False):
+        try:
+            all_users = await get_active_members_from_channel(client, group_channel)
+        except Exception as e:
+            print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération membres canal : {e}")
+            return None
+    else:
+        print(f"{Colors.WARNING}Type de groupe/canal inconnu pour récupération membres.{Colors.ENDC}")
+        return None
+
     MEMBERS_CACHE["timestamp"] = now_ts
     MEMBERS_CACHE["members"] = all_users
     print(f"{Colors.OKGREEN}Membres actifs récupérés : {len(all_users)}{Colors.ENDC}")
@@ -311,8 +370,7 @@ async def add_members(client, group_target, users_to_add, account):
         await asyncio.sleep(BASE_DELAY_BETWEEN_ADDS + random.uniform(-3, 3))
     return added_count
 
-# === FONCTIONNALITES RECUPERATIONS, AJOUTS/MESSAGE
-
+# === FONCTIONNALITÉS RÉCUPERATIONS, AJOUTS/MESSAGE ===
 async def run_addition():
     clear_screen()
     print(f"{Colors.BOLD}{Colors.HEADER}Début ajout multi-compte membres actifs...{Colors.ENDC}\n")
@@ -324,12 +382,25 @@ async def run_addition():
         print(f"{Colors.FAIL}Groupe/canal cible non configuré. Configure-le via le menu.{Colors.ENDC}")
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir...{Colors.ENDC}")
         return
+    if GROUP_SOURCE is None:
+        print(f"{Colors.FAIL}Groupe/canal source non configuré. Configure-le via le menu.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir...{Colors.ENDC}")
+        return
+    if not (getattr(GROUP_SOURCE, 'megagroup', False) or getattr(GROUP_SOURCE, 'broadcast', False)):
+        print(f"{Colors.FAIL}Le groupe/canal source doit être un groupe (méga-groupe) ou un canal valide.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Veuillez choisir un groupe/canal source valide. Appuyez sur Entrée...{Colors.ENDC}")
+        return
     temp_client = await connect_client(ACCOUNTS[0])
     if temp_client is None:
         print(f"{Colors.FAIL}Impossible de connecter le premier compte.{Colors.ENDC}")
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir...{Colors.ENDC}")
         return
     members = await get_all_active_members(temp_client, GROUP_SOURCE)
+    if members is None:
+        print(f"{Colors.FAIL}Impossible de récupérer les membres actifs du groupe/canal source.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir...{Colors.ENDC}")
+        await temp_client.disconnect()
+        return
     await temp_client.disconnect()
     if not members:
         print(f"{Colors.WARNING}Pas de membres actifs trouvés au groupe/canal source.{Colors.ENDC}")
@@ -397,7 +468,7 @@ async def mass_message():
                     try:
                         await client.send_message(m.id, message)
                         print(f"{Colors.OKGREEN}Message envoyé à {m.first_name or 'N/A'} ({m.id}){Colors.ENDC}")
-                        await asyncio.sleep(2)  # Pause entre messages
+                        await asyncio.sleep(2)
                     except Exception as e:
                         print(f"{Colors.FAIL}Erreur envoi message à {m.first_name or 'N/A'} ({m.id}): {e}{Colors.ENDC}")
             except Exception as e:
@@ -419,10 +490,52 @@ async def refresh_all_accounts():
     save_accounts()
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
-# (Autres fonctions complètes du script initial sont supposées ici sans modification pour éviter la longueur)
+async def remove_inactive_members():
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Retirer membres inactifs à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
-# --- MENU PRINCIPAL ET BOUCLE ---
+async def advanced_search_group_channel(account):
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Recherche avancée groupe/canal à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
+async def leave_multiple_groups_channels(account):
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Quitter des groupes/canaux à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+async def increase_views(account):
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Augmenter vues des pubs à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+async def react_to_message(account):
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Réactions aux pubs/messages à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+async def create_poll(account):
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Sondage/Votes à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+def create_api_id_hash_info():
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Créer un API ID & API HASH à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+def report_account_group_channel():
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Signaler un compte/groupe/canal à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+async def refresh_script():
+    clear_screen()
+    print(f"{Colors.BOLD}Fonction Actualiser & Correction intelligent du script à implémenter...{Colors.ENDC}")
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+# === MENU PRINCIPAL ET BOUCLE ===
 def print_menu():
     clear_screen()
     print(f"{Colors.HEADER}{Colors.BOLD}=== MENU PRINCIPAL ==={Colors.ENDC}")
@@ -568,6 +681,7 @@ def main_loop():
             print(f"{Colors.FAIL}Choix invalide.{Colors.ENDC}")
             time.sleep(1)
 
+# === EXÉCUTION PRINCIPALE ===
 if __name__ == '__main__':
     if not access_code_prompt():
         sys.exit(1)
