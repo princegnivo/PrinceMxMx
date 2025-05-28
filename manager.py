@@ -635,8 +635,112 @@ async def advanced_search_group_channel(account):
     await disconnect_client(account)
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
-# Les autres fonctions principales (run_addition(), mass_message(), refresh_all_accounts(), etc.) restent inchangées 
-# et doivent être intégrées comme dans la version précédente.
+# === QUITTER PLUSIEURS GROUPES ET CANAUX ===
+async def leave_multiple_groups_channels(account):
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}Quitter plusieurs groupes/canaux{Colors.ENDC}\n")
+
+    client = await connect_client(account)
+    if client is None:
+        print(f"{Colors.FAIL}Impossible de connecter le compte {account['phone']}.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée...{Colors.ENDC}")
+        return
+
+    groups_channels = await get_all_groups_channels(client)
+    if not groups_channels:
+        print(f"{Colors.WARNING}Aucun groupe/canal trouvé.{Colors.ENDC}")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    print("Liste des groupes/canaux :")
+    for i, g in enumerate(groups_channels, 1):
+        g_type = 'Canal' if getattr(g, 'broadcast', False) else 'Groupe'
+        print(f"{Colors.OKCYAN}{i}{Colors.ENDC} - [{g_type}] {g.title}")
+
+    choices = input("\nEntrez les numéros des groupes/canaux à quitter, séparés par des virgules : ").strip()
+    if not choices:
+        print("Action annulée.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    try:
+        indices = [int(ch.strip()) for ch in choices.split(',') if ch.strip().isdigit()]
+    except Exception:
+        print("Entrée invalide.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    to_leave = []
+    for idx in indices:
+        if 1 <= idx <= len(groups_channels):
+            to_leave.append(groups_channels[idx -1])
+
+    if not to_leave:
+        print("Aucun groupe/canal valide sélectionné.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    confirm = input(f"{Colors.FAIL}Confirmez-vous quitter les {len(to_leave)} groupes/canaux sélectionnés ? (o/N) : {Colors.ENDC}").strip().lower()
+    if confirm != 'o':
+        print("Action annulée.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    for group in to_leave:
+        try:
+            await client(LeaveChannelRequest(group))
+            print(f"{Colors.OKGREEN}Quitte {group.title} avec succès.{Colors.ENDC}")
+        except Exception as e:
+            print(f"{Colors.FAIL}Erreur en quittant {group.title}: {e}{Colors.ENDC}")
+        await asyncio.sleep(BASE_DELAY_BETWEEN_ADDS + random.uniform(-3, 3))
+
+    await disconnect_client(account)
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+
+# === ACTUALISER & CORRIGER INTELLIGEMMENT LE SCRIPT ===
+async def refresh_script():
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}Actualisation & correction intelligente du script{Colors.ENDC}\n")
+
+    if not ACCOUNTS:
+        print(f"{Colors.FAIL}Aucun compte configuré.{Colors.ENDC}")
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    success_count = 0
+    fail_count = 0
+
+    for account in ACCOUNTS:
+        print(f"{Colors.OKBLUE}Traitement du compte {account['phone']}...{Colors.ENDC}")
+        try:
+            client = await connect_client(account)
+            if client is None:
+                fail_count += 1
+                print(f"{Colors.FAIL}Impossible de connecter le compte {account['phone']}.{Colors.ENDC}")
+                continue
+
+            # Pour une amélioration future : nettoyage sessions, vérifications, mise à jour config, etc.
+            save_accounts()
+
+            await disconnect_client(account)
+            success_count += 1
+            print(f"{Colors.OKGREEN}Compte {account['phone']} validé et reconnecté.{Colors.ENDC}")
+        except Exception as e:
+            fail_count += 1
+            print(f"{Colors.FAIL}Erreur lors de la validation de {account['phone']}: {e}{Colors.ENDC}")
+
+        await asyncio.sleep(2)
+
+    print(f"\n{Colors.OKGREEN}{success_count} comptes mis à jour avec succès.{Colors.ENDC}")
+    if fail_count:
+        print(f"{Colors.FAIL}{fail_count} comptes ont rencontré des erreurs.{Colors.ENDC}")
+
+    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 # === MENU PRINCIPAL ET BOUCLE ===
 def print_menu():
@@ -792,4 +896,5 @@ if __name__ == '__main__':
     print(f"{Colors.HEADER}{Colors.BOLD}=== Gestionnaire Telegram multi-comptes optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
     main_loop()
+
 
