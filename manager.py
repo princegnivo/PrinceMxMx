@@ -208,18 +208,14 @@ def is_user_active_recently(user):
         return (now - was_online) <= delta
     return False
 
-async def get_all_groups_channels(client, filter_source=False):
+async def get_all_groups_channels(client):
     groups_channels = []
     try:
         dialogs = await client(GetDialogsRequest(offset_date=None, offset_id=0,
                 offset_peer=InputPeerEmpty(), limit=300, hash=0))
         for chat in dialogs.chats:
-            if filter_source:
-                if getattr(chat, 'megagroup', False):
-                    groups_channels.append(chat)
-            else:
-                if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
-                    groups_channels.append(chat)
+            if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
+                groups_channels.append(chat)
     except Exception as e:
         print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération groupes/canaux : {e}")
     return groups_channels
@@ -229,8 +225,7 @@ async def choose_group_channel(account, purpose):
     if not client:
         input(f"{Colors.FAIL}Impossible de se connecter avec {account['phone']}. Appuyez sur Entrée...{Colors.ENDC}")
         return None
-    filter_source = (purpose == "source")
-    groups_channels = await get_all_groups_channels(client, filter_source=filter_source)
+    groups_channels = await get_all_groups_channels(client)
     if not groups_channels:
         input(f"{Colors.WARNING}Aucun groupe/canal trouvé. Appuyez sur Entrée...{Colors.ENDC}")
         await disconnect_client(account)
@@ -322,11 +317,7 @@ async def get_all_active_members(client, group_channel):
             return None
 
     elif getattr(group_channel, 'broadcast', False):
-        try:
-            all_users = await get_active_members_from_channel(client, group_channel)
-        except Exception as e:
-            print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Récupération membres canal : {e}")
-            return None
+        all_users = await get_active_members_from_channel(client, group_channel)
     else:
         print(f"{Colors.WARNING}Type de groupe/canal inconnu pour récupération membres.{Colors.ENDC}")
         return None
@@ -689,4 +680,3 @@ if __name__ == '__main__':
     print(f"{Colors.HEADER}{Colors.BOLD}=== Gestionnaire Telegram multi-comptes optimisé ==={Colors.ENDC}")
     input(f"{Colors.WARNING}Appuyez sur Entrée pour démarrer...{Colors.ENDC}")
     main_loop()
-
