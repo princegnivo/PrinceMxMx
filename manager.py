@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, errors
 from telethon.tl.functions.channels import GetParticipantsRequest, InviteToChannelRequest, JoinChannelRequest, LeaveChannelRequest, GetFullChannelRequest
 from telethon.tl.functions.messages import GetDialogsRequest, GetFullChatRequest, GetHistoryRequest
-from telethon.tl.types import ChannelParticipantsSearch, UserStatusRecently, UserStatusOffline, UserStatusOnline, InputPeerEmpty
+from telethon.tl.types import ChannelParticipantsSearch, UserStatusRecently, UserStatusOffline, UserStatusOnline, InputPeerEmpty, InputChannel
 from telethon.utils import get_input_peer
 
 # === CONSTANTES COULEURS ANSI ===
@@ -550,6 +550,7 @@ async def remove_inactive_members():
     removed_count = 0
     for user in inactive_members:
         try:
+            # Retirer le membre du groupe/canal
             await client(LeaveChannelRequest(user.id))
             removed_count += 1
             print(f"{Colors.OKGREEN}Membre {user.first_name or 'N/A'} retiré.{Colors.ENDC}")
@@ -584,12 +585,20 @@ async def advanced_search_group_channel(account):
     try:
         dialogs = await client(GetDialogsRequest(offset_date=None, offset_id=0,
                 offset_peer=InputPeerEmpty(), limit=300, hash=0))
+        me = await client.get_me()
         for chat in dialogs.chats:
             title = getattr(chat, 'title', '').lower()
             if not title:
                 continue
             if any(kw in title for kw in keywords):
-                matches.append((chat, "Titre"))
+                # Vérifier si déjà membre
+                try:
+                    full = await client(GetFullChannelRequest(channel=chat))
+                    if me.id not in [u.user_id if hasattr(u, 'user_id') else None for u in full.full_chat.participants.participants]:
+                        matches.append((chat, "Titre"))
+                except:
+                    # En cas d'erreur, ajouter quand même
+                    matches.append((chat, "Titre"))
                 continue
             # Recherche dans description si possible
             desc = ""
@@ -600,7 +609,12 @@ async def advanced_search_group_channel(account):
                 desc = ""
             desc = desc.lower()
             if any(kw in desc for kw in keywords):
-                matches.append((chat, "Description"))
+                try:
+                    full = await client(GetFullChannelRequest(channel=chat))
+                    if me.id not in [u.user_id if hasattr(u, 'user_id') else None for u in full.full_chat.participants.participants]:
+                        matches.append((chat, "Description"))
+                except:
+                    matches.append((chat, "Description"))
     except Exception as e:
         print(f"{Colors.FAIL}[ERREUR]{Colors.ENDC} Recherche groupes/canaux : {e}")
         await disconnect_client(account)
@@ -608,28 +622,60 @@ async def advanced_search_group_channel(account):
         return
 
     if not matches:
-        print(f"{Colors.WARNING}Aucun groupe ou canal ne correspond aux mots-clés fournis.{Colors.ENDC}")
+        print(f"{Colors.WARNING}Aucun groupe ou canal ne correspond aux mots-clés fournis ou déjà membre de tous.{Colors.ENDC}")
         await disconnect_client(account)
         input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
         return
 
-    print(f"{Colors.OKGREEN}Groupes/canaux trouvés :{Colors.ENDC}")
+    print(f"{Colors.OKGREEN}Groupes/canaux trouvés (où vous n'êtes pas membre) :{Colors.ENDC}")
     for i, (chat, source) in enumerate(matches, 1):
         g_type = 'Canal' if getattr(chat, 'broadcast', False) else 'Groupe'
         print(f"{Colors.OKCYAN}{i}{Colors.ENDC} - [{g_type}] {chat.title} (trouvé dans : {source})")
 
-    choice = input("\nVoulez-vous rejoindre un de ces groupes/canaux ? Entrez le numéro ou appuyez sur Entrée pour revenir : ").strip()
-    if choice.isdigit() and 1 <= int(choice) <= len(matches):
-        chosen = matches[int(choice)-1][0]
+    choices = input("\nEntrez les numéros des groupes/canaux à rejoindre, séparés par des virgules, ou appuyez sur Entrée pour annuler : ").strip()
+    if not choices:
+        print("Action annulée.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    try:
+        indices = [int(ch.strip()) for ch in choices.split(',') if ch.strip().isdigit()]
+    except Exception:
+        print("Entrée invalide.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    to_join = []
+    for idx in indices:
+        if 1 <= idx <= len(matches):
+            to_join.append(matches[idx -1][0])
+
+    if not to_join:
+        print("Aucun groupe/canal valide sélectionné.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    confirm = input(f"{Colors.WARNING}Confirmez-vous rejoindre les {len(to_join)} groupes/canaux sélectionnés ? (o/N) : {Colors.ENDC}").strip().lower()
+    if confirm != 'o':
+        print("Action annulée.")
+        await disconnect_client(account)
+        input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
+        return
+
+    joined_count = 0
+    for group in to_join:
         try:
-            await client(JoinChannelRequest(channel=chosen))
-            print(f"{Colors.OKGREEN}Vous avez rejoint {chosen.title}.{Colors.ENDC}")
-            global GROUP_SOURCE
-            GROUP_SOURCE = chosen
+            await client(JoinChannelRequest(channel=group))
+            print(f"{Colors.OKGREEN}Vous avez rejoint {group.title}.{Colors.ENDC}")
+            joined_count += 1
         except Exception as e:
-            print(f"{Colors.FAIL}Erreur lors de la tentative de rejoindre le groupe/canal : {e}{Colors.ENDC}")
-    else:
-        print("Retour au menu principal.")
+            print(f"{Colors.FAIL}Erreur lors de la tentative de rejoindre {group.title} : {e}{Colors.ENDC}")
+        await asyncio.sleep(BASE_DELAY_BETWEEN_ADDS + random.uniform(-3, 3))
+
+    print(f"{Colors.OKGREEN}{joined_count} groupes/canaux rejoints avec succès.{Colors.ENDC}")
 
     await disconnect_client(account)
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
@@ -692,28 +738,15 @@ async def leave_multiple_groups_channels(account):
 
     for group in to_leave:
         try:
-            await client(LeaveChannelRequest(group))
+            # Conversion vers InputChannel requise pour la requête LeaveChannelRequest
+            input_channel = InputChannel(group.id, group.access_hash)
+            await client(LeaveChannelRequest(input_channel))
             print(f"{Colors.OKGREEN}Quitte {group.title} avec succès.{Colors.ENDC}")
         except Exception as e:
             print(f"{Colors.FAIL}Erreur en quittant {group.title}: {e}{Colors.ENDC}")
         await asyncio.sleep(BASE_DELAY_BETWEEN_ADDS + random.uniform(-3, 3))
 
     await disconnect_client(account)
-    input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
-
-# === ACTUALISER & CORRIGER INTELLIGEMMENT LE SCRIPT ===
-async def refresh_script():
-    clear_screen()
-    print(f"{Colors.BOLD}{Colors.HEADER}Mise à jour et reconnexion de tous les comptes...{Colors.ENDC}\n")
-    for account in ACCOUNTS:
-        client = await connect_client(account)
-        if client:
-            print(f"{Colors.OKGREEN}{account['phone']} connecté.{Colors.ENDC}")
-            account['last_error'] = None
-            await disconnect_client(account)
-        else:
-            print(f"{Colors.FAIL}Échec connexion pour {account['phone']}.{Colors.ENDC}")
-    save_accounts()
     input(f"{Colors.WARNING}Appuyez sur Entrée pour revenir au menu...{Colors.ENDC}")
 
 # === MENU PRINCIPAL ET BOUCLE ===
@@ -731,7 +764,7 @@ def print_menu():
     print(f"{Colors.OKCYAN}7{Colors.ENDC} - Envoi de message en masse au groupe/canal source")
     print(f"{Colors.OKGREEN}RETIRER/REJOINDRE/QUITTER{Colors.ENDC}")
     print(f"{Colors.OKCYAN}8{Colors.ENDC} - Retrait membres inactifs")
-    print(f"{Colors.OKCYAN}9{Colors.ENDC} - Recherche avancée groupe/canal (avec option rejoindre)")
+    print(f"{Colors.OKCYAN}9{Colors.ENDC} - Recherche avancée groupe/canal (avec option rejoindre multiple)")
     print(f"{Colors.OKCYAN}10{Colors.ENDC} - Quitter plusieurs groupes/canaux")
     print(f"{Colors.OKGREEN}VUES/REACTIONS/SONDAGE{Colors.ENDC}")
     print(f"{Colors.OKCYAN}11{Colors.ENDC} - Augmenter de vues des pubs sans compte (canaux uniquement)")
